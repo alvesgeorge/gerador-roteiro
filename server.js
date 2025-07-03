@@ -1,72 +1,72 @@
-// server.js
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import OpenAI from "openai";
+import express from 'express';
+import fetch from 'node-fetch';
+import dotenv from 'dotenv';
 
 dotenv.config();
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
+const PORT = process.env.PORT || 3000;
+const HF_TOKEN = process.env.HF_TOKEN;
+const HF_MODEL = "mistralai/mistral-7b-instruct";
+const HF_API_URL = "https://router.huggingface.co/novita/v3/openai/chat/completions";
 
-app.post("/api/gerar-roteiro", async (req, res) => {
+app.post('/api/gerar-roteiro', async (req, res) => {
   const { destino, dataInicio, dataFim, perfil, preferencias, orcamento, restricoes } = req.body;
 
   const prompt = `
-Você é um assistente especializado em roteiros turísticos. Gere um roteiro em formato JSON com o seguinte schema:
+Você é um especialista em turismo. Crie um roteiro turístico em formato JSON para:
 
-{
-  "itinerario": [
-    {
-      "dia": 1,
-      "actividades": [
-        {
-          "horario": "string",
-          "local": "string",
-          "descrição": "string",
-          "custo_aproximado": "string",
-          "transporte": "string",
-          "duração": "string",
-          "foto_url": "string"
-        }
-      ]
-    }
-  ]
-}
-
-Informações da viagem:
 Destino: ${destino}
-Datas: ${dataInicio} a ${dataFim}
+Período: de ${dataInicio} até ${dataFim}
 Perfil dos viajantes: ${perfil}
 Preferências: ${preferencias}
 Orçamento: ${orcamento}
 Restrições: ${restricoes}
 
-Responda SOMENTE com o JSON no formato especificado.
-`;
+Responda apenas em JSON bem estruturado com datas, atividades por dia e sugestões locais.
+  `;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        { role: "system", content: "Você cria roteiros turísticos personalizados." },
-        { role: "user", content: prompt }
-      ],
-      temperature: 0.3
+    const resposta = await fetch(HF_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${HF_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: HF_MODEL,
+        messages: [
+          { role: "system", content: "Você é um assistente especialista em turismo." },
+          { role: "user", content: prompt }
+        ],
+        stream: false
+      })
     });
 
-    const jsonResponse = completion.choices[0].message.content;
-    res.status(200).json(JSON.parse(jsonResponse));
-  } catch (error) {
-    console.error("Erro:", error.message);
-    res.status(500).json({ error: "Erro ao gerar roteiro" });
+    const json = await resposta.json();
+
+    if (!json.choices || !json.choices[0]?.message?.content) {
+      return res.status(500).json({ erro: 'Erro na resposta da IA', detalhe: json });
+    }
+
+    const respostaTexto = json.choices[0].message.content;
+
+    try {
+      const parsed = JSON.parse(respostaTexto);
+      res.json(parsed);
+    } catch (e) {
+      // IA não respondeu com JSON válido
+      res.json({ aviso: "Resposta não foi JSON válido", texto_bruto: respostaTexto });
+    }
+
+  } catch (err) {
+    console.error("Erro ao chamar IA:", err);
+    res.status(500).json({ erro: "Erro ao gerar roteiro", detalhe: err.message });
   }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Servidor rodando em http://localhost:${PORT}`);
+});
